@@ -42,7 +42,7 @@ Every API failure returns the same shape (see `app/errors.py`):
 | code | You see | What to do |
 |---|---|---|
 | `file_too_large` | This file is too big — the limit is N MB. | Compress, or split into smaller documents, and upload again. |
-| `unsupported_type` | We cannot read “name” — only PDF, Excel (.xlsx) and CSV… | Convert to PDF/XLSX/CSV and upload again. |
+| `unsupported_type` | We cannot read “name” — lists the supported formats… | Convert to PDF, Word (.docx), Excel, CSV, OpenDocument, PowerPoint, email, text or an image. |
 | `not_a_pdf` | …named .pdf but is not a real PDF file. | Re-export as PDF and upload again. |
 | `not_a_workbook` | …named .xlsx but is not a readable Excel workbook. | Re-save from Excel as .xlsx and upload again. |
 | `csv_binary` / `csv_unreadable` | …named .csv but is not readable text. | Re-export as CSV (UTF-8 text) and upload again. |
