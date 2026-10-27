@@ -56,9 +56,34 @@ file references, verification commands and residual risks. Summary:
   [`docs/LOCAL_TESTING.md`](docs/LOCAL_TESTING.md) and the sample
   declarations in `samples/`.
 
-**Verification**: `pytest -q` -> 127 passed, 2 skipped; `docker compose ps`
-all healthy; CSV, XLSX and PDF uploads exercised end-to-end through the
-worker, review, publish and public passport.
+**Universal ingestion + grounded extraction**
+- Every common supplier format is accepted: PDF, Word (`.docx`), Excel
+  (`.xlsx/.xlsm/.xls`), CSV/TSV, OpenDocument (`.ods/.odt/.odp`), PowerPoint,
+  `.eml`, text/markup (`.txt/.md/.log/.rtf/.html/.xml/.json`) and images/scans
+  (`.png/.jpg/.webp/.gif/.tif/.bmp`). Legacy `.doc` is rejected with a
+  "save as .docx or PDF" hint.
+- Extraction is two-phase and grounded: the model first transcribes every
+  labelled value/row with an evidence quote, then maps passport fields only
+  from that transcription. Values whose quote is not found in the parsed
+  source are dropped, so an unfamiliar document cannot silently invent
+  footwear fields.
+- Large documents are chunked (24k chars, bounded concurrency); scanned PDFs
+  are split into ≤12-page vision calls. `document_items` keeps up to 2,000
+  values with evidence, and the UI shows document type/summary/language,
+  page count, scan flag and text size.
+- Large uploads use a presigned R2 PUT (`POST .../documents/presign` then
+  `.../documents/complete`) so Vercel's ~4.5 MB body limit no longer applies.
+  Multipart remains the fallback when direct upload is unavailable.
+  Caps: 64 MB PDF, 32 MB Office/CSV, 20 MB images, 16 MB text, 100 MB hard
+  ceiling. Require `python-docx`, `python-pptx`, `xlrd`, `odfpy`, `Pillow`
+  (already in `requirements.txt`).
+- The standalone worker supports `--concurrency N` (`WORKER_CONCURRENCY`,
+  max 16) with `FOR UPDATE SKIP LOCKED`; the serverless tick still processes
+  one job per invocation.
+
+**Verification**: `pytest -q` -> 135 passed, 2 skipped; `docker compose ps`
+all healthy; PDF, XLSX, CSV, DOCX and PPTX parsing plus grounded-extraction
+units exercised; review, publish and public passport unchanged.
 
 
 ## Founder clone-and-run on Windows (one command, PowerShell)
@@ -174,9 +199,11 @@ uvicorn app.main:app --reload
 
 ## Corrections applied (v2)
 
-1. Extraction branches by file type: PDF native to Claude, XLSX via
-   openpyxl (real `Sheet / Cell` coordinates), CSV via pandas, unknown
-   types rejected 415 at upload.
+1. Extraction branches by file type in `app/services/document_ingest.py`
+   (PDF via pypdf, XLSX via openpyxl, XLS via xlrd, DOCX via python-docx,
+   PPTX via python-pptx, ODF via odfpy, CSV/text via the existing decoders),
+   then runs the grounded two-phase extractor. Unknown types are rejected
+   `415` at upload; scanned PDFs/images go to vision.
 2. No pgvector in `001_schema.sql`.
 3. `WORKSPACE_ID` env constant in `app/config.py`, used by `app/auth.py`;
    no user->workspace lookup table.

@@ -104,7 +104,7 @@ Conventions: `API=$NEXT_PUBLIC_API_URL`, `T=$(supabase session access_token)`.
 ## F. Cross-cutting (every row)
 
 - Auth: `SESSION_EXPIRED` → `redirectToLoginOnSessionExpired` (`web/lib/api.ts:160`) wired in dossier page, RequestWorkspace, StageGaps/Respond/Structure. NOT yet in review/notifications/suppliers/ask/account pages → raw error text there (residual P1).
-- Uploads: PDF/XLSX/CSV only (`storage.py:85` magic sniff + `:46` full-body `verify_file_content`); 25MB absolute (`products.py`); per-type caps (`storage.py:30-33`); `e.target.value=""` reselect (verify per dropzone).
+- Uploads: PDF/Word/Excel/CSV/OpenDocument/PowerPoint/email/text/image (`document_ingest.py`); 100MB absolute + per-type caps (`storage.py`); presigned R2 for >4MiB; `e.target.value=""` reselect (verify per dropzone).
 - Timeouts: `apiAuthed` 15s abort; uploads 60s (`apiUploadAuthed` default). Worker path (`scripts/worker.py`) is sole extractor; `BackgroundTasks` removed from upload.
 - Errors: brick box truncated 300ch; moss success; pulse/skeleton loading.
 - Multi-company: per-company DB; `ensure_workspace_exists` 409 fail-closed (`auth.py:95`); cross-workspace ids → 404 via `uuid_or_404` + workspace-scoped SQL; membership miss → role `none` → 403 (`auth.py:28-93`); DB outage → 503 (never mints rights).

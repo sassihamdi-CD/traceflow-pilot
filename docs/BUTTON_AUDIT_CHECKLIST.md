@@ -99,7 +99,7 @@ How to use: run each row manually against a seeded company DB, tick + record act
 ## F. Cross-cutting checks (every row above)
 
 - [ ] Auth: expired token → refresh-once → retry; else `SESSION_EXPIRED` must REDIRECT to `/login` (today only `login/page.tsx:83-86` does; elsewhere raw text).
-- [ ] Uploads: PDF/XLSX/CSV only; 25MB `413`; fake magic `415`; binary CSV `415`; re-select same file works (`e.target.value=""`).
+- [ ] Uploads: PDF/Word/Excel/CSV/OpenDocument/PowerPoint/email/text/image; per-type `413`; fake magic `415`; binary CSV `415`; >4MiB presigned R2 path; re-select same file works (`e.target.value=""`).
 - [ ] Timeouts: `apiAuthed` 15s abort → "Request timed out after 15s"; uploads have NO timeout (must add, large PDFs hang).
 - [ ] Errors: brick box shows truncated 300ch body; success: moss box; loading: pulse/skeleton.
 - [ ] Multi-company (separate DB per company): repeat A–E per company DB; Company A token must 401/404 on Company B URLs; `WORKSPACE_ID` boot check fail-closed.
