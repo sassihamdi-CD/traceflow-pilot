@@ -224,3 +224,128 @@ async def accept_all(product_id: str, caller: Caller = Depends(require_reviewer)
                 accepted.append(ids[0])
             skipped = sum(len(ids) for ids in per_field.values()) - len(accepted)
     return {"ok": True, "accepted": accepted, "skipped_conflicts": skipped}
+
+
+@router.post("/api/products/{product_id}/fields/{field_key}/manual")
+async def manual_value(
+    product_id: str, field_key: str, body: CorrectBody,
+    caller: Caller = Depends(require_reviewer),
+):
+    """Add a reviewer-entered value for a field that no document covers.
+
+    This is the missing-value path before publish: the value is accepted
+    immediately (the reviewer is the source), and the one-verified-per-field
+    index still guarantees the passport cannot show a duplicate label.
+    """
+    uuid_or_404(product_id)
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        await ensure_workspace_exists(conn, caller.workspace_id)
+        async with conn.transaction():
+            cur = await conn.execute(
+                "SELECT category FROM products WHERE id = %s AND workspace_id = %s FOR UPDATE",
+                (product_id, caller.workspace_id),
+            )
+            row = await cur.fetchone()
+            if row is None:
+                raise errors.not_found("That item")
+            category = row[0]
+            cur = await conn.execute(
+                "SELECT 1 FROM field_definitions WHERE category = %s AND field_key = %s",
+                (category, field_key),
+            )
+            if await cur.fetchone() is None:
+                raise errors.err(
+                    422, "unknown_field",
+                    "That field does not belong to this product category.",
+                    "Refresh the page and choose one of the fields shown.",
+                )
+            cur = await conn.execute(
+                "SELECT id FROM field_values WHERE product_id = %s AND workspace_id = %s"
+                " AND field_key = %s AND status IN ('accepted','corrected') FOR UPDATE",
+                (product_id, caller.workspace_id, field_key),
+            )
+            if await cur.fetchone() is not None:
+                raise errors.err(
+                    409, "already_verified",
+                    "This field already has a verified value.",
+                    "Edit or replace the existing value instead of adding a second one.",
+                )
+            cur = await conn.execute(
+                "INSERT INTO field_values (workspace_id, product_id, field_key, value, unit,"
+                " status, document_id, location, extracted_by, reviewed_by, reviewed_at)"
+                " VALUES (%s,%s,%s,%s,%s,'accepted',NULL,NULL,'manual',%s,now()) RETURNING id",
+                (caller.workspace_id, product_id, field_key, body.value, body.unit,
+                 caller.user_id),
+            )
+            new_id = str((await cur.fetchone())[0])
+            await _audit(conn, caller.workspace_id, caller.user_id, "field.manual", new_id,
+                         json.dumps({"field_key": field_key}))
+    return {"ok": True, "id": new_id}
+
+
+@router.post("/api/products/{product_id}/fields/{field_key}/replace")
+async def replace_verified(
+    product_id: str, field_key: str, body: CorrectBody,
+    caller: Caller = Depends(require_reviewer),
+):
+    """Replace an already-verified value with a reviewer-entered correction.
+
+    Accepting a proposal or entering a value manually is not always the last
+    word: before publish the reviewer must be able to fix a wrong value. The
+    old row is rejected (history kept) and a new corrected row becomes the one
+    verified value, so the public passport and the one-verified index agree.
+    """
+    uuid_or_404(product_id)
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        await ensure_workspace_exists(conn, caller.workspace_id)
+        async with conn.transaction():
+            cur = await conn.execute(
+                "SELECT category FROM products WHERE id = %s AND workspace_id = %s FOR UPDATE",
+                (product_id, caller.workspace_id),
+            )
+            row = await cur.fetchone()
+            if row is None:
+                raise errors.not_found("That item")
+            category = row[0]
+            cur = await conn.execute(
+                "SELECT 1 FROM field_definitions WHERE category = %s AND field_key = %s",
+                (category, field_key),
+            )
+            if await cur.fetchone() is None:
+                raise errors.err(
+                    422, "unknown_field",
+                    "That field does not belong to this product category.",
+                    "Refresh the page and choose one of the fields shown.",
+                )
+            cur = await conn.execute(
+                "SELECT id FROM field_values WHERE product_id = %s AND workspace_id = %s"
+                " AND field_key = %s AND status IN ('accepted','corrected')"
+                " ORDER BY reviewed_at DESC NULLS LAST, created_at DESC FOR UPDATE",
+                (product_id, caller.workspace_id, field_key),
+            )
+            old_ids = [str(r[0]) for r in await cur.fetchall()]
+            if not old_ids:
+                raise errors.err(
+                    409, "no_verified_value",
+                    "This field has no verified value to replace.",
+                    "Enter a new value instead.",
+                )
+            for old_id in old_ids:
+                await conn.execute(
+                    "UPDATE field_values SET status='rejected', reviewed_by=%s, reviewed_at=now()"
+                    " WHERE id = %s",
+                    (caller.user_id, old_id),
+                )
+            cur = await conn.execute(
+                "INSERT INTO field_values (workspace_id, product_id, field_key, value, unit,"
+                " status, document_id, location, extracted_by, reviewed_by, reviewed_at, supersedes_id)"
+                " VALUES (%s,%s,%s,%s,%s,'corrected',NULL,NULL,'manual',%s,now(),%s) RETURNING id",
+                (caller.workspace_id, product_id, field_key, body.value, body.unit,
+                 caller.user_id, old_ids[0]),
+            )
+            new_id = str((await cur.fetchone())[0])
+            await _audit(conn, caller.workspace_id, caller.user_id, "field.replaced", new_id,
+                         json.dumps({"field_key": field_key, "replaced": old_ids}))
+    return {"ok": True, "id": new_id}

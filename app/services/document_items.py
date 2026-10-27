@@ -48,8 +48,8 @@ TABLE_ITEMS_TASK = (
     "Never invent, infer, or complete values. Cap 200 items. Return ONLY the JSON array."
 )
 
-MAX_ITEMS = 200
-MAX_LEN = 500
+MAX_ITEMS = 2000
+MAX_LEN = 2000
 
 
 def parse_items_lenient(text: str) -> list[dict]:
@@ -125,7 +125,6 @@ async def extract_full_items_pdf(body: bytes) -> list[dict]:
             client,
             model=settings.anthropic_model,
             max_tokens=12000,
-            temperature=0,
             system=FULL_ITEMS_SYSTEM,
             messages=[
                 {
@@ -199,7 +198,6 @@ async def extract_full_items_table(table: list[dict]) -> list[dict]:
             client,
             model=settings.anthropic_model,
             max_tokens=12000,
-            temperature=0,
             system=TABLE_ITEMS_SYSTEM,
             messages=[{
                 "role": "user",
@@ -254,11 +252,16 @@ def sanitize_doc_items(items: object) -> list[dict]:
                     or (unit_s is not None and len(unit_s) > MAX_LEN)
                     or (location_s is not None and len(location_s) > MAX_LEN)):
                 clean.truncated = True
+            evidence = it.get("evidence")
+            evidence_s = evidence.strip() if isinstance(evidence, str) and evidence.strip() else None
+            if evidence_s is not None and len(evidence_s) > MAX_LEN:
+                clean.truncated = True
             clean.append({
                 "label": label_s[:MAX_LEN],
                 "value": value_s[:MAX_LEN],
                 "unit": unit_s[:MAX_LEN] if unit_s is not None else None,
                 "location": location_s[:MAX_LEN] if location_s is not None else None,
+                "evidence": evidence_s[:MAX_LEN] if evidence_s is not None else None,
             })
         return clean
     except Exception:
@@ -278,6 +281,17 @@ async def store_document_items(conn, workspace_id: str, document_id: str, items:
     if not clean:
         return []
 
+    values = [
+        (workspace_id, document_id, it["label"], it["value"],
+         it["unit"], it["location"], it.get("evidence"))
+        for it in clean
+    ]
+    insert_sql = (
+        "INSERT INTO document_items"
+        " (workspace_id, document_id, label, value, unit, location, evidence)"
+        " VALUES (%s,%s,%s,%s,%s,%s,%s)"
+    )
+
     def _delete_and_insert_sync() -> None:
         with conn.transaction():
             with conn.cursor() as cur:
@@ -285,14 +299,7 @@ async def store_document_items(conn, workspace_id: str, document_id: str, items:
                     "DELETE FROM document_items WHERE workspace_id = %s AND document_id = %s",
                     (workspace_id, document_id),
                 )
-                for it in clean:
-                    cur.execute(
-                        "INSERT INTO document_items"
-                        " (workspace_id, document_id, label, value, unit, location)"
-                        " VALUES (%s,%s,%s,%s,%s,%s)",
-                        (workspace_id, document_id, it["label"], it["value"],
-                         it["unit"], it["location"]),
-                    )
+                cur.executemany(insert_sql, values)
 
     if isinstance(conn, psycopg.AsyncConnection):
         async with conn.transaction():
@@ -300,14 +307,8 @@ async def store_document_items(conn, workspace_id: str, document_id: str, items:
                 "DELETE FROM document_items WHERE workspace_id = %s AND document_id = %s",
                 (workspace_id, document_id),
             )
-            for it in clean:
-                await conn.execute(
-                    "INSERT INTO document_items"
-                    " (workspace_id, document_id, label, value, unit, location)"
-                    " VALUES (%s,%s,%s,%s,%s,%s)",
-                    (workspace_id, document_id, it["label"], it["value"],
-                     it["unit"], it["location"]),
-                )
+            async with conn.cursor() as cur:
+                await cur.executemany(insert_sql, values)
     else:
         _delete_and_insert_sync()
     return clean

@@ -10,7 +10,7 @@ from psycopg.errors import UniqueViolation
 from app import errors
 from app.config import settings
 from app.db import close_pool, get_pool
-from app.routes import ask, documents, fields, founder, intake, invites, notifications, ops, products, public, publish, requests, suppliers
+from app.routes import ask, documents, fields, founder, intake, invites, notifications, ops, products, public, publish, requests, suppliers, worker
 
 
 @asynccontextmanager
@@ -53,6 +53,7 @@ app.include_router(ops.router)
 app.include_router(suppliers.router)
 app.include_router(publish.router)
 app.include_router(public.router)
+app.include_router(worker.router)
 
 
 @app.exception_handler(UniqueViolation)

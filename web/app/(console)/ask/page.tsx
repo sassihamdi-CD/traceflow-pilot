@@ -121,7 +121,7 @@ export default function AskPage() {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ question: q }),
-      });
+      }, 90_000);
       setMsgs((m) => [...m, { role: "ai", text: out.answer }]);
     } catch (err) {
       setError(err instanceof Error ? err.message : t("askFailed"));

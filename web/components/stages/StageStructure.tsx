@@ -30,6 +30,12 @@ export function StageStructure() {
       let ok = 0;
       const failures: string[] = [];
       for (const file of files) {
+        // Vercel functions reject request bodies over 4.5 MB before our code
+        // runs (413 without CORS, which Safari surfaces as "Load failed").
+        if (file.size > 4.4 * 1024 * 1024) {
+          failures.push(`${file.name}: ${t("tooLarge")}`);
+          continue;
+        }
         const fd = new FormData();
         fd.append("file", file);
         if (uploadSupplier) fd.append("supplier_id", uploadSupplier);

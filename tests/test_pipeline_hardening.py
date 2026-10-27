@@ -85,20 +85,21 @@ def test_xlsx_real_workbook_passes():
     assert storage_mod.verify_file_content("real.xlsx", ".xlsx", body) == ".xlsx"
 
 
-def test_pdf_cap_below_absolute_25mb():
-    assert storage_mod.MAX_BYTES_BY_EXT[".pdf"] < 25 * 1024 * 1024
+def test_pdf_cap_within_absolute_limit():
+    assert 10 * 1024 * 1024 <= storage_mod.MAX_BYTES_BY_EXT[".pdf"]
+    assert storage_mod.MAX_BYTES_BY_EXT[".pdf"] <= storage_mod.ABSOLUTE_MAX_BYTES
 
 
 def test_per_type_size_caps():
-    storage_mod.check_size(".pdf", 10 * 1024 * 1024)
+    storage_mod.check_size(".pdf", storage_mod.MAX_BYTES_BY_EXT[".pdf"])
     with pytest.raises(HTTPException) as e:
-        storage_mod.check_size(".pdf", 10 * 1024 * 1024 + 1)
+        storage_mod.check_size(".pdf", storage_mod.MAX_BYTES_BY_EXT[".pdf"] + 1)
     assert e.value.status_code == 413
     with pytest.raises(HTTPException) as e2:
-        storage_mod.check_size(".xlsx", 5 * 1024 * 1024 + 1)
+        storage_mod.check_size(".xlsx", storage_mod.MAX_BYTES_BY_EXT[".xlsx"] + 1)
     assert e2.value.status_code == 413
     with pytest.raises(HTTPException) as e3:
-        storage_mod.check_size(".csv", 5 * 1024 * 1024 + 1)
+        storage_mod.check_size(".csv", storage_mod.MAX_BYTES_BY_EXT[".csv"] + 1)
     assert e3.value.status_code == 413
     storage_mod.check_size(".csv", 1024)  # small is fine
 
@@ -174,17 +175,21 @@ def test_csv_over_500_cells_truncated():
     assert small.truncated is False
 
 
-def test_doc_items_200_cap_truncated():
-    items = [{"label": f"l{i}", "value": f"v{i}"} for i in range(201)]
+def test_doc_items_2000_cap_truncated():
+    from app.services.document_items import MAX_ITEMS
+
+    items = [{"label": f"l{i}", "value": f"v{i}"} for i in range(MAX_ITEMS + 1)]
     out = sanitize_doc_items(items)
-    assert len(out) == 200
+    assert len(out) == MAX_ITEMS
     assert out.truncated is True
     assert sanitize_doc_items([{"label": "a", "value": "b"}]).truncated is False
 
 
-def test_doc_items_500char_cut_truncated():
-    out = sanitize_doc_items([{"label": "a", "value": "x" * 600}])
-    assert len(out[0]["value"]) == 500
+def test_doc_items_long_value_cut_truncated():
+    from app.services.document_items import MAX_LEN
+
+    out = sanitize_doc_items([{"label": "a", "value": "x" * (MAX_LEN + 100)}])
+    assert len(out[0]["value"]) == MAX_LEN
     assert out.truncated is True
 
 

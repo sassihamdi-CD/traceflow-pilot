@@ -67,7 +67,11 @@ async def product_detail(conn, workspace_id: str, product_id: str) -> dict | Non
     cur = await conn.execute(
         "SELECT d.id, d.filename, d.storage_key, d.page_count, d.supplier_id, d.uploaded_at,"
         " d.extraction_status, d.extracted_count, d.extraction_error, d.detected_parties,"
-        " d.extraction_truncated, s.name FROM documents d LEFT JOIN suppliers s ON s.id = d.supplier_id"
+        " d.extraction_truncated, s.name,"
+        " (SELECT COUNT(*) FROM document_items di WHERE di.document_id = d.id) AS items_count,"
+        " d.document_type, d.document_summary, d.document_language, d.mime_type,"
+        " d.file_size, d.is_scanned, d.extraction_version, d.extracted_text_chars"
+        " FROM documents d LEFT JOIN suppliers s ON s.id = d.supplier_id"
         " WHERE d.product_id = %s AND d.workspace_id = %s ORDER BY d.uploaded_at",
         (product_id, workspace_id),
     )
@@ -80,6 +84,15 @@ async def product_detail(conn, workspace_id: str, product_id: str) -> dict | Non
                      "uploaded_at": r[5].isoformat(), "extraction_status": r[6],
                      "extracted_count": r[7], "extraction_error": r[8],
                      "truncated": bool(r[10]),
-                     "detected_parties": parties})
+                     "items_count": r[12],
+                     "detected_parties": parties,
+                     "document_type": r[13],
+                     "document_summary": r[14],
+                     "document_language": r[15],
+                     "mime_type": r[16],
+                     "file_size": r[17],
+                     "is_scanned": bool(r[18]),
+                     "extraction_version": r[19],
+                     "extracted_text_chars": r[20]})
     return {"product": product, "fields": fields, "counts": counts,
             **readiness, "total_required": total_required, "documents": docs}

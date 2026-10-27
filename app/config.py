@@ -17,12 +17,16 @@ class Settings(BaseSettings):
     frontend_url: str = "http://localhost:3001"  # comma-separated origins allowed
     intake_secret: str = ""  # shared secret for POST /api/intake/email (empty = 503)
     founder_key: str = ""  # TraceFlow founder key for /founder + /api/founder/*.
+    worker_secret: str = ""  # shared secret for POST /api/worker/tick (empty = 401)
     # Server-only, never NEXT_PUBLIC_. Empty = founder area disabled.
     # Local-only demo mode: bypasses Supabase auth, R2, and Anthropic so the
     # whole flow can be exercised without any external credentials. NEVER
     # enable in production (it grants reviewer access to a fixed demo user).
     demo_mode: bool = False
     demo_storage_dir: str = "/srv/app/uploads"  # shared api/worker volume
+    # Serverless: keep 2 per instance because Vercel runs many instances.
+    # A single long-lived API host (Fly/Railway/VM) can raise this to 10-20.
+    db_pool_max_size: int = 2
     port: int = 8000
 
 

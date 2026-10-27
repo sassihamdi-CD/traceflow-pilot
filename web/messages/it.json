@@ -134,8 +134,8 @@
     "title": "Documenti",
     "upload": "Carica documento",
     "dragDrop": "Trascina un file qui, o clicca per selezionare",
-    "supportedFormats": "Supportati: PDF, XLSX, CSV",
-    "maxSize": "Dimensione max: 25 MB (PDF), 10 MB (XLSX/CSV)",
+    "supportedFormats": "Supportati: PDF, Word, Excel, CSV, OpenDocument, scans",
+    "maxSize": "Dimensione max: 64 MB (PDF), 32 MB (Office/CSV), 20 MB (immagini) — i file grandi si caricano direttamente nello storage",
     "fileName": "Nome file",
     "fileType": "Tipo",
     "fileSize": "Dimensione",
@@ -324,7 +324,7 @@
     "aiUnconfigured": "Servizio IA non configurato.",
     "aiUnavailable": "Servizio IA temporaneamente non disponibile.",
     "fileTooLarge": "File troppo grande. Dimensione massima: {limit}",
-    "invalidFileType": "Tipo di file non valido. Supportati: PDF, XLSX, CSV",
+    "invalidFileType": "Tipo di file non valido. Supportati: PDF, Word, Excel, CSV, OpenDocument, scans",
     "extractionFailed": "Estrazione fallita. Riprova.",
     "publishBlocked": "Impossibile pubblicare: {reasons}",
     "inviteInvalid": "Codice invito non valido o scaduto.",
@@ -390,7 +390,7 @@
       "steps": {
         "upload": {
           "title": "Carica le evidenze",
-          "text": "Distinte base, dichiarazioni, certificati — PDF, XLSX, CSV. L'estrazione cita la pagina o la cella esatta."
+          "text": "Distinte base, dichiarazioni, certificati — PDF, Word, Excel, CSV, OpenDocument, scans. L'estrazione cita la pagina o la cella esatta."
         },
         "review": {
           "title": "Rivedi i valori",
@@ -409,6 +409,8 @@
       "loadFailed": "Caricamento non riuscito",
       "actionFailed": "Azione non riuscita",
       "networkError": "Errore di rete: {message}",
+      "uploadFailed": "Caricamento non riuscito: {message}",
+      "uploadFailedFallback": "Caricamento non riuscito",
       "networkErrorUpload": "Errore di rete durante il caricamento",
       "uploadsFailed": "{fail} caricamento/i non riuscito/i; {ok} salvato/i.",
       "uploadsOk": "{ok} documento/i salvato/i — estrazione in corso; questa pagina si aggiorna da sola.",
@@ -429,7 +431,7 @@
       "acceptAll": "Accetta {count} {count, plural, one {proposta} other {proposte}}",
       "newEvidence": "nuove evidenze da rivedere",
       "usuallyProvenBy": "Di solito provato da: {proof}",
-      "gapMissing": "Nessun documento copre ancora questo campo — chiedi direttamente al fornitore, senza spostarti.",
+      "gapMissing": "Nessun documento copre ancora questo campo — richiedilo al fornitore oppure inserisci il valore tu.",
       "gapConflict": "Le fonti non concordano — chiedi al fornitore il valore autorevole.",
       "supplierNamePlaceholder": "Nome fornitore, es. Gommus…",
       "addSupplier": "Aggiungi fornitore",
@@ -455,7 +457,10 @@
       "correctedMsg": "“{label}” corretto.",
       "typeCorrected": "Digita prima il valore corretto.",
       "sourceDocs": "Documenti sorgente",
-      "sourceDocsHint": "Ogni valore etichettato trascritto da ciascun documento — estrazione completa, separata dai campi del passaporto qui sopra.",
+      "sourceDocsHint": "Valori del passaporto ricavati da ciascun documento. Dove è disponibile la trascrizione completa, espandi per vedere ogni valore etichettato.",
+      "pages": "{count} pagine",
+      "scanned": "scansione",
+      "typeUnknown": "documento",
       "passportValues": "{count} valore/i del passaporto",
       "allExtracted": "— Tutti i valori estratti",
       "actionsRequired": "Azioni richieste",
@@ -481,7 +486,29 @@
         "done": "completato",
         "failed": "non riuscito"
       },
-      "backToProducts": "Torna ai dossier"
+      "backToProducts": "Torna ai dossier",
+      "missingBannerTitle": "{count} campi obbligatori senza valore",
+      "missingBannerBody": "Questi campi bloccano la pubblicazione. Richiedili al fornitore oppure inserisci il valore qui sotto.",
+      "missingBannerHint": "I valori manuali vengono accettati subito e compaiono nel passaporto come verificati.",
+      "orEnterManually": "Oppure inserisci il valore tu",
+      "manualPlaceholder": "Valore",
+      "saveValue": "Salva valore",
+      "saving": "Salvataggio…",
+      "manualSavedMsg": "“{label}” salvato.",
+      "manualValueFirst": "Inserisci prima un valore.",
+      "manualEntry": "Inserimento manuale",
+      "publishBlockedCount": "Pubblicazione bloccata · {count} mancanti",
+      "passportOnly": "— Solo campi del passaporto",
+      "retryExtraction": "Riprova estrazione",
+      "retrying": "Nuovo tentativo…",
+      "retryQueued": "Estrazione rimessa in coda.",
+      "extractionFailed": "Estrazione non riuscita.",
+      "extractionRunning": "Estrazione in corso — la pagina si aggiorna automaticamente.",
+      "identityReviewHint": "Controlla singolarmente le proposte di nome prodotto e SKU — il nome di un fornitore può comparire come nome del prodotto.",
+      "editVerified": "Modifica valore verificato",
+      "replacementPlaceholder": "Nuovo valore",
+      "replacedMsg": "“{label}” sostituito.",
+      "cancel": "Annulla"
     },
     "states": {
       "verified": "Verificato",
@@ -529,8 +556,8 @@
     "upload": {
       "extracting": "Estrazione delle evidenze…",
       "drop": "Trascina i documenti sorgente o clicca per sfogliare",
-      "hint": "Distinta base · dichiarazione del fornitore · certificato — PDF, XLSX, CSV · selezione multipla",
-      "rejected": "{names} non accettato/i — solo PDF, XLSX o CSV."
+      "hint": "PDF · Word · Excel · CSV · OpenDocument · PowerPoint · email · testo · immagine · selezione multipla",
+      "rejected": "{names} non accettato/i — controlla i formati supportati."
     },
     "docItems": {
       "loadFailed": "Caricamento non riuscito",
@@ -619,6 +646,7 @@
         "noDocs": "Nessun documento ancora caricato. Le informazioni sono presenti in distinte base, dichiarazioni, certificati — caricali qui.",
         "docsLoaded": "{count, plural, one {# documento caricato} other {# documenti caricati}}. Ogni citazione successiva rimanda alla propria fonte.",
         "storedNotice": "{count} documento/i salvato/i — la strutturazione viene eseguita in background; i valori appariranno sotto mano a mano.",
+        "tooLarge": "Questo file supera il limite di caricamento. I file grandi usano il caricamento diretto nello storage; se non disponibile, comprimi o dividi il file.",
         "linkFailed": "Collegamento non riuscito",
         "addFailed": "Aggiunta non riuscita",
         "actionFailed": "Azione non riuscita",
