@@ -12,16 +12,17 @@ from anthropic import AsyncAnthropic
 
 from app.config import settings
 
-ASK_SYSTEM = """You answer questions about a footwear manufacturer's product-compliance
-workspace. You receive a snapshot of structured data: products, extracted field
-values (each with review status, source document and page/cell location),
-client requests, and suppliers.
+ASK_SYSTEM = """You answer questions about a product-compliance workspace. You receive a
+snapshot of structured data: products, documents (any file type), transcribed
+document items, reviewed field values, client requests, and suppliers.
 
 Hard rules:
 1. Answer ONLY from the snapshot. If the data does not contain the answer, say
    so explicitly and suggest which document or supplier could fill the gap.
+   Never invent a value, a supplier, a document, or a citation.
 2. Every factual claim must carry its citation inline as
-   [SKU → field → document / location].
+   [SKU → field → document / location] for field values, or
+   [document / location] for document items.
 3. Always distinguish VERIFIED values (accepted/corrected by a human) from
    PROPOSED values (AI-extracted, awaiting review). Never present a proposed
    value as fact.
@@ -36,7 +37,9 @@ Hard rules:
 """
 
 
-async def build_snapshot(conn, workspace_id: str, max_values: int = 300) -> str:
+async def build_snapshot(
+    conn, workspace_id: str, max_values: int = 300, max_items: int = 400
+) -> str:
     lines: list[str] = []
     cur = await conn.execute(
         "SELECT sku, name, category, manufacturer_name, passport_published"
@@ -61,6 +64,36 @@ async def build_snapshot(conn, workspace_id: str, max_values: int = 300) -> str:
         lines.append(
             f"- [{sku}] {fk} = {val}{(' ' + unit) if unit else ''}"
             f" ({st}; {doc or 'no doc'} / {loc or 'no location'})"
+        )
+
+    cur = await conn.execute(
+        "SELECT filename, document_type, document_summary, extraction_status,"
+        " page_count, is_scanned FROM documents WHERE workspace_id = %s"
+        " ORDER BY uploaded_at DESC LIMIT 40",
+        (workspace_id,),
+    )
+    docs = await cur.fetchall()
+    lines.append(f"DOCUMENTS ({len(docs)}, newest first):")
+    for filename, dtype, summary, status, pages, scanned in docs:
+        lines.append(
+            f"- {filename} | {dtype or 'unknown'} | {status}"
+            f" | pages={pages if pages is not None else 'n/a'}"
+            f" | scanned={bool(scanned)}"
+            f" | {summary or 'no summary yet'}"
+        )
+
+    cur = await conn.execute(
+        "SELECT d.filename, di.label, di.value, di.unit, di.location"
+        " FROM document_items di JOIN documents d ON d.id = di.document_id"
+        " WHERE d.workspace_id = %s ORDER BY di.created_at DESC LIMIT %s",
+        (workspace_id, max_items),
+    )
+    items = await cur.fetchall()
+    lines.append(f"DOCUMENT ITEMS ({len(items)}, newest first):")
+    for doc, label, value, unit, loc in items:
+        lines.append(
+            f"- [{doc} / {loc or 'no location'}] {label} = {value}"
+            f"{(' ' + unit) if unit else ''}"
         )
 
     cur = await conn.execute(
@@ -94,7 +127,6 @@ async def ask_workspace(question: str, snapshot: str) -> str:
     resp = await client.messages.create(
         model=settings.anthropic_model,
         max_tokens=800,
-        temperature=0,
         system=ASK_SYSTEM,
         messages=[{
             "role": "user",

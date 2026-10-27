@@ -219,9 +219,12 @@ def test_unknown_file_type_upload_rejected_415(client):
     assert r.status_code == 415, r.text
 
 
-def test_oversize_upload_rejected_413(client):
-    """C14/F: >25MB body must be 413 (raised before DB/storage)."""
-    big = b"x" * (25 * 1024 * 1024 + 1)
+def test_oversize_upload_rejected_413(client, monkeypatch):
+    """C14/F: a body above the type cap must be 413 before DB/storage."""
+    import app.services.storage as storage_mod
+
+    monkeypatch.setitem(storage_mod.MAX_BYTES_BY_EXT, ".pdf", 1024)
+    big = b"%PDF" + b"x" * 4096
     r = client.post("/api/products/44444444-4444-4444-4444-444444444444/documents",
                     files={"file": ("big.pdf", big, "application/pdf")})
     assert r.status_code == 413, r.text

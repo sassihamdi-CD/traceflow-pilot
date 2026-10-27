@@ -5,7 +5,7 @@
 set -euo pipefail
 : "${DATABASE_URL:?DATABASE_URL must be set}"
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
-FILES="001_schema.sql 002_seed_footwear.sql 013_pilot_workspace.sql 004_requests.sql 005_extraction_status.sql 006_supplier_wiring.sql 007_memberships.sql 008_extraction_jobs.sql 009_invites.sql 010_extracting_status.sql 011_document_items.sql 012_request_notifications.sql 014_invite_hygiene.sql 015_audit_insert_only.sql 016_extraction_truncated.sql 017_invite_company.sql 018_app_role_grants.sql 019_one_verified_per_field.sql"
+FILES="001_schema.sql 002_seed_footwear.sql 013_pilot_workspace.sql 004_requests.sql 005_extraction_status.sql 006_supplier_wiring.sql 007_memberships.sql 008_extraction_jobs.sql 009_invites.sql 010_extracting_status.sql 011_document_items.sql 012_request_notifications.sql 014_invite_hygiene.sql 015_audit_insert_only.sql 016_extraction_truncated.sql 017_invite_company.sql 018_app_role_grants.sql 019_one_verified_per_field.sql 020_universal_ingestion.sql"
 # Files covered by the 000 Supabase one-shot (schema + footwear seed +
 # pilot workspace row). ONLY these may be baseline-marked; 004-012 create
 # tables/columns the one-shot never had, so marking them applied without

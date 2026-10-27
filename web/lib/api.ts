@@ -20,7 +20,11 @@ export function supabaseBrowser() {
 }
 
 /** Authenticated API call from the reviewer console (Supabase session token). */
-export async function apiAuthed(path: string, init: RequestInit = {}) {
+export async function apiAuthed(
+  path: string,
+  init: RequestInit = {},
+  timeoutMs = 15_000,
+) {
   const supabase = createClient();
 
   const getToken = async (): Promise<string | null> => {
@@ -53,12 +57,12 @@ export async function apiAuthed(path: string, init: RequestInit = {}) {
 
   const withTimeout = async <T>(fn: (signal: AbortSignal) => Promise<T>): Promise<T> => {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 15_000);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       return await fn(controller.signal);
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") {
-        throw new Error("Request timed out after 15s");
+        throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s`);
       }
       throw err;
     } finally {
@@ -210,6 +214,7 @@ export async function apiRedeemInvite(code: string): Promise<InviteRedeemResult>
   if (DEMO_MODE) {
     return { workspace: "demo-workspace", role: "reviewer" } as InviteRedeemResult;
   }
+  const timeoutMs = 15_000;
   const supabase = createClient();
 
   const getToken = async (): Promise<string | null> => {
@@ -243,12 +248,12 @@ export async function apiRedeemInvite(code: string): Promise<InviteRedeemResult>
 
   const withTimeout = async <T>(fn: (signal: AbortSignal) => Promise<T>): Promise<T> => {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 15_000);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       return await fn(controller.signal);
     } catch (err) {
       if (err instanceof DOMException && err.name === "AbortError") {
-        throw new Error("Request timed out after 15s");
+        throw new Error(`Request timed out after ${Math.round(timeoutMs / 1000)}s`);
       }
       throw err;
     } finally {
@@ -328,4 +333,106 @@ export async function apiIntake(subject: string, body_text: string, from_email?:
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ subject, body_text, from_email }),
   }) as Promise<{ request_id: string; items_count: number }>;
+}
+
+/** Extract a human message from the API's {detail:{code,message,hint}} shape. */
+function apiErrorMessage(data: unknown, status: number): string {
+  const rec = (data ?? {}) as Record<string, any>;
+  const detail = rec.detail;
+  if (typeof detail === "string") return detail;
+  if (detail && typeof detail === "object") {
+    if (detail.message) return String(detail.message);
+    if (detail.code) return String(detail.code);
+  }
+  if (rec.message) return String(rec.message);
+  return `Request failed: ${status}`;
+}
+
+const MULTIPART_LIMIT = 4 * 1024 * 1024;
+
+/**
+ * Upload one document. Large files use a presigned R2 PUT so Vercel's ~4.5 MB
+ * request-body limit does not apply; smaller files use the normal multipart
+ * endpoint. If direct upload is not configured, it falls back automatically.
+ */
+export async function apiUploadDocument(
+  productId: string,
+  file: File,
+  supplierId?: string,
+): Promise<{ document_id: string; status: string }> {
+  const token = await accessToken();
+  if (!token) throw new Error("SESSION_EXPIRED");
+  const base = `${API}/api/products/${productId}/documents`;
+
+  if (file.size > MULTIPART_LIMIT) {
+    let presignFallback = true;
+    try {
+      const presign = await fetch(`${base}/presign`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ filename: file.name, size: file.size }),
+      });
+      const pdata = await presign.json().catch(() => null);
+      if (!presign.ok) {
+        const code = (pdata as any)?.detail?.code;
+        if (code !== "presign_unavailable") {
+          throw new Error(apiErrorMessage(pdata, presign.status));
+        }
+      } else {
+        presignFallback = false;
+        const p = pdata as { upload_url: string; storage_key: string; content_type: string };
+        const put = await fetch(p.upload_url, {
+          method: "PUT",
+          headers: { "Content-Type": p.content_type },
+          body: file,
+        });
+        if (!put.ok) throw new Error(`Direct upload failed (${put.status}). Check the R2 bucket CORS rules.`);
+        const complete = await fetch(`${base}/complete`, {
+          method: "POST",
+          headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            filename: file.name,
+            storage_key: p.storage_key,
+            supplier_id: supplierId ?? null,
+          }),
+        });
+        const cdata = await complete.json().catch(() => null);
+        if (!complete.ok) throw new Error(apiErrorMessage(cdata, complete.status));
+        return cdata as { document_id: string; status: string };
+      }
+    } catch (err) {
+      if (!presignFallback) throw err;
+      // presign unavailable: fall through to multipart
+    }
+  }
+
+  const fd = new FormData();
+  fd.append("file", file);
+  if (supplierId) fd.append("supplier_id", supplierId);
+  let res: Response;
+  try {
+    res = await fetch(base, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+      body: fd,
+    });
+  } catch (err) {
+    if (file.size > MULTIPART_LIMIT) {
+      throw new Error(
+        "This file is too large for the standard upload path, and direct-to-storage upload is not configured.",
+      );
+    }
+    throw err;
+  }
+  const data = await res.json().catch(() => null);
+  if (!res.ok) {
+    const message = apiErrorMessage(data, res.status);
+    if (res.status === 413) {
+      throw new Error(
+        `${message} This file is too large for the standard upload path; direct-to-storage upload is not configured.`,
+      );
+    }
+    throw new Error(message);
+  }
+  return data as { document_id: string; status: string };
 }

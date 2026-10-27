@@ -19,7 +19,9 @@ router = APIRouter()
 async def _fetch_document(conn, workspace_id: str, document_id: str) -> dict | None:
     cur = await conn.execute(
         "SELECT d.id, d.product_id, d.filename, d.extraction_status,"
-        " d.extracted_count, d.extraction_error, d.uploaded_at, d.extraction_truncated"
+        " d.extracted_count, d.extraction_error, d.uploaded_at, d.extraction_truncated,"
+        " d.document_type, d.document_summary, d.document_language, d.mime_type, d.file_size,"
+        " d.is_scanned, d.extracted_text_chars, d.extraction_version"
         " FROM documents d WHERE d.id = %s AND d.workspace_id = %s",
         (document_id, workspace_id),
     )
@@ -35,12 +37,20 @@ async def _fetch_document(conn, workspace_id: str, document_id: str) -> dict | N
         "extraction_error": row[5],
         "uploaded_at": row[6].isoformat() if row[6] is not None else None,
         "truncated": bool(row[7]) if len(row) > 7 else False,
+        "document_type": row[8] if len(row) > 8 else None,
+        "document_summary": row[9] if len(row) > 9 else None,
+        "document_language": row[10] if len(row) > 10 else None,
+        "mime_type": row[11] if len(row) > 11 else None,
+        "file_size": row[12] if len(row) > 12 else None,
+        "is_scanned": bool(row[13]) if len(row) > 13 else False,
+        "extracted_text_chars": row[14] if len(row) > 14 else None,
+        "extraction_version": row[15] if len(row) > 15 else None,
     }
 
 
 async def _fetch_items(conn, workspace_id: str, document_id: str) -> list[dict]:
     cur = await conn.execute(
-        "SELECT id, label, value, unit, location, created_at FROM document_items"
+        "SELECT id, label, value, unit, location, created_at, evidence FROM document_items"
         " WHERE workspace_id = %s AND document_id = %s ORDER BY created_at",
         (workspace_id, document_id),
     )
@@ -53,6 +63,7 @@ async def _fetch_items(conn, workspace_id: str, document_id: str) -> list[dict]:
             "unit": r[3],
             "location": r[4],
             "created_at": r[5].isoformat() if r[5] is not None else None,
+            "evidence": r[6] if len(r) > 6 else None,
         })
     return items
 

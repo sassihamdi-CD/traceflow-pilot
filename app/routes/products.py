@@ -23,12 +23,22 @@ from app.services.extraction import (
     xlsx_to_table,
 )
 from app.services.storage import (
+    ALLOWED_EXTENSIONS,
     check_size,
     classify_file,
+    content_type_for,
     delete_from_storage,
+    ext_of,
+    head_storage,
+    key_belongs_to,
+    max_size_mb,
     new_storage_key,
+    presign_put,
+    read_storage_head,
+    storage_configured,
     upload_to_storage,
     verify_file_content,
+    ZIP_EXTENSIONS,
 )
 
 router = APIRouter()
@@ -245,14 +255,15 @@ async def upload_document(
     if supplier_id is not None:
         uuid_or_404(supplier_id, "That supplier")
     body = await file.read()
-    if len(body) > 25 * 1024 * 1024:
-        raise errors.file_too_large(25)
-    ext = classify_file(file.filename or "", body[:8])  # 415 here on unknown type
-    check_size(ext, len(body))  # 413 per-type caps (PDF < 25MB for Claude limits)
-    verify_file_content(file.filename or "", ext, body)  # 415 deep content check
-    content_types = {".pdf": "application/pdf",
-                     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                     ".csv": "text/csv"}
+    filename = file.filename or ""
+    ext = ext_of(filename)
+    if ext not in ALLOWED_EXTENSIONS:
+        raise errors.unsupported_type(filename or "that file")
+    if len(body) > 100 * 1024 * 1024:
+        raise errors.file_too_large(100)
+    check_size(ext, len(body))  # 413 per-type caps, before any storage/DB work
+    ext = classify_file(filename, body[:8])  # 415 here on type/content mismatch
+    verify_file_content(filename, ext, body)  # 415 deep content check
     pool = await get_pool()
     async with pool.connection() as conn:
         await ensure_workspace_exists(conn, caller.workspace_id)
@@ -272,16 +283,17 @@ async def upload_document(
         key = new_storage_key(caller.workspace_id, product_id, file.filename or "upload")
         try:
             # boto3 is synchronous; never block the event loop on R2 I/O.
-            await run_in_threadpool(upload_to_storage, key, body, content_types[ext])
+            await run_in_threadpool(upload_to_storage, key, body, content_type_for(ext))
         except Exception as exc:  # noqa: BLE001
             print(f"storage upload failed: {type(exc).__name__}: {exc}")
             raise errors.storage_unavailable() from exc
         try:
             cur = await conn.execute(
                 "INSERT INTO documents (workspace_id, product_id, supplier_id, filename, storage_key,"
-                " extraction_status, extracted_count)"
-                " VALUES (%s,%s,%s,%s,%s,'extracting',0) RETURNING id",
-                (caller.workspace_id, product_id, supplier_id, file.filename, key),
+                " extraction_status, extracted_count, mime_type, file_size)"
+                " VALUES (%s,%s,%s,%s,%s,'extracting',0,%s,%s) RETURNING id",
+                (caller.workspace_id, product_id, supplier_id, file.filename, key,
+                 content_type_for(ext), len(body)),
             )
             doc_id = str((await cur.fetchone())[0])
             # If the job cannot be queued the document must not be left in
@@ -308,4 +320,149 @@ async def upload_document(
             except Exception as cleanup_exc:  # noqa: BLE001
                 print(f"storage cleanup failed: {type(cleanup_exc).__name__}: {cleanup_exc}")
             raise
+    return {"document_id": doc_id, "status": "extracting"}
+
+
+@router.post("/api/products/{product_id}/documents/presign")
+async def presign_document(product_id: str, body: dict, caller: Caller = Depends(require_reviewer)):
+    """Step 1 of large-file upload: return a direct-to-R2 PUT URL.
+
+    The browser uploads the bytes straight to Cloudflare R2, bypassing
+    Vercel's ~4.5 MB request-body limit. The object is only registered as a
+    document after ``/documents/complete`` verifies it exists.
+    """
+    uuid_or_404(product_id, "That product")
+    filename = str(body.get("filename") or "").strip()
+    size = body.get("size")
+    ext = ext_of(filename)
+    if not filename or not isinstance(size, int) or size <= 0:
+        raise errors.missing_field("the file name and size")
+    # Validate type + per-type cap before issuing a signed URL.
+    if ext not in ALLOWED_EXTENSIONS:
+        raise errors.unsupported_type(filename)
+    if ext == ".doc":
+        raise errors.file_content_problem("legacy_doc")
+    check_size(ext, size)
+    if not storage_configured():
+        raise errors.presign_unavailable()
+
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        cur = await conn.execute(
+            "SELECT id FROM products WHERE id = %s AND workspace_id = %s",
+            (product_id, caller.workspace_id),
+        )
+        if await cur.fetchone() is None:
+            raise errors.not_found("That product")
+    key = new_storage_key(caller.workspace_id, product_id, filename)
+    content_type = content_type_for(ext)
+    try:
+        url = await run_in_threadpool(presign_put, key, content_type)
+    except Exception as exc:  # noqa: BLE001
+        print(f"presign failed: {type(exc).__name__}: {exc}")
+        raise errors.storage_unavailable() from exc
+    return {
+        "upload_url": url,
+        "storage_key": key,
+        "content_type": content_type,
+        "max_size_mb": max_size_mb(ext),
+    }
+
+
+@router.post("/api/products/{product_id}/documents/complete")
+async def complete_document(product_id: str, body: dict, caller: Caller = Depends(require_reviewer)):
+    """Step 2 of large-file upload: verify the R2 object and enqueue it.
+
+    The key must live under this workspace/product prefix, the object must
+    exist, and its real size must fit the type cap. A failed DB write deletes
+    the object so no orphan is left behind.
+    """
+    uuid_or_404(product_id, "That product")
+    filename = str(body.get("filename") or "").strip()
+    storage_key = str(body.get("storage_key") or "").strip()
+    supplier_id = body.get("supplier_id")
+    if supplier_id is not None and not str(supplier_id).strip():
+        supplier_id = None
+    ext = ext_of(filename)
+    if not filename or not storage_key:
+        raise errors.missing_field("the file name and storage key")
+    if not key_belongs_to(storage_key, caller.workspace_id, product_id):
+        raise errors.not_found("That upload")
+    if ext == ".doc":
+        try:
+            await run_in_threadpool(delete_from_storage, storage_key)
+        except Exception:
+            pass
+        raise errors.file_content_problem("legacy_doc")
+    if supplier_id is not None:
+        uuid_or_404(str(supplier_id), "That supplier")
+
+    try:
+        head = await run_in_threadpool(head_storage, storage_key)
+        actual_size = int(head.get("ContentLength") or 0)
+    except Exception as exc:  # noqa: BLE001
+        print(f"upload verify failed: {type(exc).__name__}: {exc}")
+        raise errors.upload_incomplete() from exc
+    check_size(ext, actual_size)
+    try:
+        head_bytes = await run_in_threadpool(read_storage_head, storage_key, 65536)
+        classify_file(filename, head_bytes)
+        # Zip containers need the central directory (at the end), so their full
+        # validation happens in the worker parser. Everything else can be
+        # checked from the first 64 KiB.
+        if ext not in ZIP_EXTENSIONS:
+            verify_file_content(filename, ext, head_bytes)
+    except Exception as exc:  # noqa: BLE001
+        # Remove an invalid object rather than leaving it orphaned.
+        try:
+            await run_in_threadpool(delete_from_storage, storage_key)
+        except Exception:
+            pass
+        if isinstance(exc, Exception) and hasattr(exc, "status_code"):
+            raise
+        raise errors.file_content_problem("corrupt_container") from exc
+
+    pool = await get_pool()
+    doc_id = None
+    try:
+        async with pool.connection() as conn:
+            await ensure_workspace_exists(conn, caller.workspace_id)
+            cur = await conn.execute(
+                "SELECT id FROM products WHERE id = %s AND workspace_id = %s",
+                (product_id, caller.workspace_id),
+            )
+            if await cur.fetchone() is None:
+                raise errors.not_found("That product")
+            if supplier_id:
+                cur = await conn.execute(
+                    "SELECT id FROM suppliers WHERE id = %s AND workspace_id = %s",
+                    (supplier_id, caller.workspace_id),
+                )
+                if await cur.fetchone() is None:
+                    raise errors.not_found("That supplier")
+            cur = await conn.execute(
+                "INSERT INTO documents (workspace_id, product_id, supplier_id, filename, storage_key,"
+                " extraction_status, extracted_count, mime_type, file_size)"
+                " VALUES (%s,%s,%s,%s,%s,'extracting',0,%s,%s) RETURNING id",
+                (caller.workspace_id, product_id, supplier_id, filename, storage_key,
+                 content_type_for(ext), actual_size),
+            )
+            doc_id = str((await cur.fetchone())[0])
+            await conn.execute(
+                "INSERT INTO extraction_jobs (workspace_id, document_id, status)"
+                " VALUES (%s,%s,'queued')",
+                (caller.workspace_id, doc_id),
+            )
+            await conn.execute(
+                "INSERT INTO audit_log (workspace_id, actor, action, entity_type, entity_id, detail)"
+                " VALUES (%s,%s,'document.uploaded','document',%s,%s::jsonb)",
+                (caller.workspace_id, caller.user_id, doc_id,
+                 json.dumps({"filename": filename, "size": actual_size, "direct": True})),
+            )
+    except Exception:
+        try:
+            await run_in_threadpool(delete_from_storage, storage_key)
+        except Exception:
+            pass
+        raise
     return {"document_id": doc_id, "status": "extracting"}

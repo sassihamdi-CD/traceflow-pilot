@@ -4,7 +4,7 @@ import Link from "next/link";
 import { ArrowLeft, Check, Copy, ExternalLink, FileText, Pencil, Rocket, Send, X } from "lucide-react";
 import { clsx } from "clsx";
 import { useTranslations } from "next-intl";
-import { accessToken, apiAuthed } from "@/lib/api";
+import { apiAuthed, apiUploadDocument } from "@/lib/api";
 import { FIELD_DESCRIPTIONS, draftSupplierEmail, formatSignature, loadSignature } from "@/lib/fieldMeta";
 import { EmailDraftModal } from "@/components/EmailDraftModal";
 import { DocumentItems } from "@/components/DocumentItems";
@@ -12,7 +12,7 @@ import { StateBadge } from "@/components/StateBadge";
 import { ReadinessRing } from "@/components/ReadinessRing";
 import { UploadDropzone } from "@/components/UploadDropzone";
 
-type Value = { id: string; field_key: string; value: string; unit: string | null; status: string; document_id: string | null; location: string | null };
+type Value = { id: string; field_key: string; value: string; unit: string | null; status: string; document_id: string | null; location: string | null; extracted_by?: string | null };
 type Field = { field_key: string; label: string; required: boolean; state: string; has_new_proposal: boolean; values: Value[] };
 
 const COUNT_STYLE = [
@@ -52,6 +52,12 @@ export default function ProductDetail({ params }: { params: { id: string } }) {
   const [mailDraft, setMailDraft] = useState<{ subject: string; body: string; hasSignature: boolean } | null>(null);
   const [lastDraft, setLastDraft] = useState<{ label: string; fieldKey: string; recipient: string; state: string } | null>(null);
   const [newSupplier, setNewSupplier] = useState("");
+  const [manual, setManual] = useState<Record<string, string>>({});
+  const [savingManual, setSavingManual] = useState<string | null>(null);
+  const [retrying, setRetrying] = useState<string | null>(null);
+  const [replace, setReplace] = useState<Record<string, string>>({});
+  const [replaceOpen, setReplaceOpen] = useState<Record<string, boolean>>({});
+  const [savingReplace, setSavingReplace] = useState<string | null>(null);
 
   async function quickAddSupplier(): Promise<string | null> {
     const name = newSupplier.trim();
@@ -117,25 +123,22 @@ export default function ProductDetail({ params }: { params: { id: string } }) {
   async function uploadFiles(files: File[]) {
     setUploading(true); setError(""); setNotice("");
     try {
-      const token = await accessToken();
       let ok = 0, fail = 0;
+      let firstError = "";
       for (const file of files) {
-        const fd = new FormData();
-        fd.append("file", file);
         try {
-          const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/api/products/${params.id}/documents`, {
-            method: "POST",
-            headers: { Authorization: `Bearer ${token}` },
-            body: fd,
-          });
-          if (!res.ok) fail += 1;
-          else ok += 1;
+          await apiUploadDocument(params.id, file);
+          ok += 1;
         } catch (err) {
           fail += 1;
-          setError(err instanceof Error ? t("networkError", { message: err.message }) : t("networkErrorUpload"));
+          if (!firstError) {
+            firstError = err instanceof Error
+              ? t("uploadFailed", { message: err.message })
+              : t("uploadFailedFallback");
+          }
         }
       }
-      if (fail > 0) setError(t("uploadsFailed", { fail, ok }));
+      if (fail > 0) setError(`${t("uploadsFailed", { fail, ok })}${firstError ? ` ${firstError}` : ""}`);
       else setNotice(t("uploadsOk", { ok }));
       await load();
     } finally {
@@ -218,6 +221,60 @@ export default function ProductDetail({ params }: { params: { id: string } }) {
     }
   }
 
+  async function retryDocument(id: string) {
+    setRetrying(id); setError(""); setNotice("");
+    try {
+      await apiAuthed(`/api/documents/${id}/retry`, { method: "POST" });
+      setNotice(t("retryQueued"));
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("actionFailed"));
+    } finally {
+      setRetrying(null);
+    }
+  }
+
+  async function replaceVerified(fieldKey: string, label: string) {
+    const value = (replace[fieldKey] ?? "").trim();
+    if (!value) { setError(t("manualValueFirst")); return; }
+    setSavingReplace(fieldKey); setError(""); setNotice("");
+    try {
+      await apiAuthed(`/api/products/${params.id}/fields/${fieldKey}/replace`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value }),
+      });
+      setNotice(t("replacedMsg", { label }));
+      setReplaceOpen({ ...replaceOpen, [fieldKey]: false });
+      setReplace({ ...replace, [fieldKey]: "" });
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("actionFailed"));
+    } finally {
+      setSavingReplace(null);
+    }
+  }
+
+  async function saveManual(fieldKey: string, label: string) {
+    const value = (manual[fieldKey] ?? "").trim();
+    if (!value) { setError(t("manualValueFirst")); return; }
+    setSavingManual(fieldKey); setError(""); setNotice("");
+    try {
+      await apiAuthed(`/api/products/${params.id}/fields/${fieldKey}/manual`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ value }),
+      });
+      setNotice(t("manualSavedMsg", { label }));
+      setManual({ ...manual, [fieldKey]: "" });
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : t("actionFailed"));
+    } finally {
+      setSavingManual(null);
+    }
+  }
+
   if (!detail) {
     return (
       <>
@@ -242,6 +299,7 @@ export default function ProductDetail({ params }: { params: { id: string } }) {
 
   const { product, fields, counts } = detail;
   const published = product.passport_published;
+  const missingFields = fields.filter((f: Field) => f.required && f.state === "missing");
   const unambiguous = fields.flatMap((f: Field) =>
     f.state === "proposed" ? f.values.filter((v) => v.status === "proposed") : [],
   );
@@ -311,10 +369,32 @@ export default function ProductDetail({ params }: { params: { id: string } }) {
               <Check size={16} strokeWidth={2.5} /> {t("acceptAll", { count: unambiguous.length })}
             </button>
           )}
+          {fields.some((f: Field) => (f.field_key === "product_name" || f.field_key === "sku") && f.state === "proposed") && (
+            <p className="mt-2 text-xs text-muted">{t("identityReviewHint")}</p>
+          )}
 
           {(error || notice) && (
             <div className={clsx("mt-4 rounded-xl border p-3.5 text-sm font-medium", error ? "border-brick/30 bg-brick-wash text-brick" : "border-moss/30 bg-moss-wash text-moss-deep")}>
               {error || notice}
+            </div>
+          )}
+
+          {missingFields.length > 0 && !published && (
+            <div className="mt-4 rounded-xl border border-amber/30 bg-amber-wash/50 p-4">
+              <p className="text-sm font-semibold text-amber">{t("missingBannerTitle", { count: missingFields.length })}</p>
+              <p className="mt-1 text-[13px] leading-relaxed text-inksoft">{t("missingBannerBody")}</p>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {missingFields.map((f: Field) => {
+                  const label = f.field_key in FIELD_DESCRIPTIONS ? tMeta(`${f.field_key}.label` as any) : f.label;
+                  return (
+                    <a key={f.field_key} href={`#field-${f.field_key}`}
+                      className="rounded-full border border-amber/30 bg-paper px-2.5 py-1 text-xs font-semibold text-amber transition-colors hover:border-amber">
+                      {label}
+                    </a>
+                  );
+                })}
+              </div>
+              <p className="mt-2 text-xs text-amber/80">{t("missingBannerHint")}</p>
             </div>
           )}
 
@@ -324,12 +404,14 @@ export default function ProductDetail({ params }: { params: { id: string } }) {
               const fieldLabel = hasMeta ? tMeta(`${f.field_key}.label` as any) : f.label;
               const fieldWhat = hasMeta ? tMeta(`${f.field_key}.what` as any) : FIELD_DESCRIPTIONS[f.field_key]?.what;
               const fieldProof = hasMeta ? tMeta(`${f.field_key}.proof` as any) : FIELD_DESCRIPTIONS[f.field_key]?.proof;
+              const verifiedValue = f.values.find((v) => v.status === "accepted" || v.status === "corrected")?.value ?? "";
 
               return (
                 <section
                   key={f.field_key}
+                  id={`field-${f.field_key}`}
                   style={{ animationDelay: `${Math.min(fi, 8) * 0.05}s` }}
-                  className="animate-rise rounded-xl2 border border-line bg-white/70 p-5 shadow-card"
+                  className="animate-rise scroll-mt-24 rounded-xl2 border border-line bg-white/70 p-5 shadow-card"
                 >
                   <div className="flex flex-wrap items-center gap-2.5">
                     <h2 className="font-display text-lg font-semibold">{fieldLabel}</h2>
@@ -401,6 +483,24 @@ export default function ProductDetail({ params }: { params: { id: string } }) {
                           <Copy size={13} /> {t("writeEmail")}
                         </button>
                       </div>
+                      {f.state === "missing" && (
+                        <div className="mt-3 border-t border-amber/20 pt-3">
+                          <p className="text-[12px] font-semibold text-amber">{t("orEnterManually")}</p>
+                          <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                            <input
+                              value={manual[f.field_key] ?? ""}
+                              onChange={(e) => setManual({ ...manual, [f.field_key]: e.target.value })}
+                              placeholder={t("manualPlaceholder")}
+                              className="min-h-[36px] w-56 rounded-lg border border-line bg-paper px-2.5 text-[13px] outline-none focus:border-ink"
+                            />
+                            <button onClick={() => void saveManual(f.field_key, fieldLabel)}
+                              disabled={savingManual === f.field_key}
+                              className="inline-flex min-h-[36px] items-center gap-1.5 rounded-lg bg-moss px-3 text-[13px] font-semibold text-white disabled:opacity-60">
+                              <Check size={13} /> {savingManual === f.field_key ? t("saving") : t("saveValue")}
+                            </button>
+                          </div>
+                        </div>
+                      )}
                       {lastDraft?.fieldKey === f.field_key && (
                         <div className="mt-2 rounded-lg border border-moss/30 bg-moss-wash p-3 text-[13px]">
                           <p className="font-semibold text-moss-deep">{t("savedFollowup", { label: lastDraft.label, recipient: lastDraft.recipient })}</p>
@@ -423,7 +523,11 @@ export default function ProductDetail({ params }: { params: { id: string } }) {
                           <span className={clsx("font-semibold", v.status === "accepted" || v.status === "corrected" ? "text-moss-deep" : v.status === "rejected" ? "text-muted line-through" : "text-amber")}>
                             {((t(`valueStatus.${v.status}` as any) || v.status) as string).toUpperCase()}
                           </span>
-                          {v.location && <span className="inline-flex items-center gap-1"><FileText size={12} />{v.location}</span>}
+                          {v.extracted_by === "manual" ? (
+                            <span className="inline-flex items-center gap-1"><Pencil size={12} />{t("manualEntry")}</span>
+                          ) : v.location ? (
+                            <span className="inline-flex items-center gap-1"><FileText size={12} />{v.location}</span>
+                          ) : null}
                         </p>
                         {v.status === "proposed" && (
                           <div className="mt-2.5 flex flex-wrap items-center gap-2">
@@ -452,6 +556,40 @@ export default function ProductDetail({ params }: { params: { id: string } }) {
                       </div>
                     ))}
                   </div>
+
+                  {f.state === "verified" && (
+                    <div className="mt-3 border-t border-line pt-3">
+                      {replaceOpen[f.field_key] ? (
+                        <div className="flex flex-wrap items-center gap-2">
+                          <input
+                            value={replace[f.field_key] ?? verifiedValue}
+                            onChange={(e) => setReplace({ ...replace, [f.field_key]: e.target.value })}
+                            placeholder={t("replacementPlaceholder")}
+                            className="min-h-[36px] w-56 rounded-lg border border-line bg-paper px-2.5 text-[13px] outline-none focus:border-ink"
+                          />
+                          <ActionButton
+                            onClick={() => void replaceVerified(f.field_key, fieldLabel)}
+                            icon={Check}
+                            label={savingReplace === f.field_key ? t("saving") : t("saveValue")}
+                            tone="border-moss/40 bg-moss-wash text-moss-deep hover:bg-moss hover:text-white"
+                          />
+                          <button
+                            onClick={() => { setReplaceOpen({ ...replaceOpen, [f.field_key]: false }); setReplace({ ...replace, [f.field_key]: "" }); }}
+                            className="inline-flex min-h-[36px] items-center rounded-lg px-3 text-[13px] font-semibold text-muted hover:text-ink"
+                          >
+                            {t("cancel")}
+                          </button>
+                        </div>
+                      ) : (
+                        <button
+                          onClick={() => { setReplaceOpen({ ...replaceOpen, [f.field_key]: true }); setReplace({ ...replace, [f.field_key]: verifiedValue }); }}
+                          className="inline-flex min-h-[32px] items-center gap-1.5 rounded-lg px-2 text-xs font-semibold text-muted transition-colors hover:bg-parchment hover:text-ink"
+                        >
+                          <Pencil size={13} /> {t("editVerified")}
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </section>
               );
             })}
@@ -464,16 +602,57 @@ export default function ProductDetail({ params }: { params: { id: string } }) {
               <div className="mt-3 space-y-2">
                 {(detail.documents ?? []).map((d: any) => {
                   const docStatus = (t(`docStatus.${d.extraction_status}` as any) || d.extraction_status) as string;
+                  const items = d.items_count ?? 0;
+                  const done = d.extraction_status === "done";
+                  const summary = (
+                    <>
+                      {d.filename}
+                      <span className="ml-2 font-mono text-xs font-normal text-muted">
+                        {docStatus}{typeof d.extracted_count === "number" ? ` · ${t("passportValues", { count: d.extracted_count })}` : ""}
+                      </span>
+                      {done && (
+                        <span className="ml-2 text-xs font-normal text-muted">
+                          {items > 0 ? t("allExtracted") : t("passportOnly")}
+                        </span>
+                      )}
+                    </>
+                  );
+                  const meta = (
+                    <p className="mt-1 font-mono text-[11px] text-muted">
+                      {d.document_type || t("typeUnknown")}
+                      {typeof d.page_count === "number" ? ` · ${t("pages", { count: d.page_count })}` : ""}
+                      {typeof d.file_size === "number" ? ` · ${(d.file_size / (1024 * 1024)).toFixed(1)} MB` : ""}
+                      {d.is_scanned ? ` · ${t("scanned")}` : ""}
+                      {d.document_language ? ` · ${d.document_language}` : ""}
+                    </p>
+                  );
+                  const retry = d.extraction_status === "failed" && (
+                    <div className="mt-3 flex flex-wrap items-center gap-2">
+                      <p className="text-[13px] text-brick">{d.extraction_error || t("extractionFailed")}</p>
+                      <button onClick={() => void retryDocument(d.id)} disabled={retrying === d.id}
+                        className="inline-flex min-h-[32px] items-center gap-1.5 rounded-lg border border-brick/30 bg-brick-wash px-2.5 text-xs font-semibold text-brick disabled:opacity-60">
+                        {retrying === d.id ? t("retrying") : t("retryExtraction")}
+                      </button>
+                    </div>
+                  );
+                  if (done && items === 0) {
+                    return (
+                      <div key={d.id} className="rounded-xl border border-line bg-paper px-4 py-2.5 text-sm font-semibold">
+                        {summary}
+                        {meta}
+                      </div>
+                    );
+                  }
                   return (
                     <details key={d.id} className="rounded-xl border border-line bg-paper px-4 py-2.5">
-                      <summary className="cursor-pointer text-sm font-semibold">
-                        {d.filename}
-                        <span className="ml-2 font-mono text-xs font-normal text-muted">
-                          {docStatus}{typeof d.extracted_count === "number" ? ` · ${t("passportValues", { count: d.extracted_count })}` : ""}
-                        </span>
-                        <span className="ml-2 text-xs font-normal text-muted">{t("allExtracted")}</span>
-                      </summary>
-                      <DocumentItems documentId={d.id} />
+                      <summary className="cursor-pointer text-sm font-semibold">{summary}</summary>
+                      {meta}
+                      {d.document_summary && <p className="mt-1 text-[13px] text-inksoft">{d.document_summary}</p>}
+                      {retry}
+                      {(d.extraction_status === "pending" || d.extraction_status === "extracting") && (
+                        <p className="mt-3 text-[13px] text-muted">{t("extractionRunning")}</p>
+                      )}
+                      {done && items > 0 && <DocumentItems documentId={d.id} />}
                     </details>
                   );
                 })}
@@ -515,7 +694,7 @@ export default function ProductDetail({ params }: { params: { id: string } }) {
                 onClick={() => void act(`/api/products/${params.id}/publish`, undefined, t("published"))}
                 className="flex min-h-[44px] w-full items-center justify-center gap-2 rounded-xl bg-ink font-semibold text-paper transition-transform duration-150 hover:scale-[1.01] active:scale-[0.99]"
               >
-                <Rocket size={16} /> {t("publishPassport")}
+                <Rocket size={16} /> {missingFields.length > 0 ? t("publishBlockedCount", { count: missingFields.length }) : t("publishPassport")}
               </button>
             )}
             <p className="mt-2.5 text-xs leading-relaxed text-muted">{t("publishNote", { count: detail.total_required })}</p>

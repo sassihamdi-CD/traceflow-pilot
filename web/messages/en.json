@@ -134,8 +134,8 @@
     "title": "Documents",
     "upload": "Upload document",
     "dragDrop": "Drag and drop a file here, or click to select",
-    "supportedFormats": "Supported: PDF, XLSX, CSV",
-    "maxSize": "Max size: 25 MB (PDF), 10 MB (XLSX/CSV)",
+    "supportedFormats": "Supported: PDF, Word, Excel, CSV, OpenDocument, scans",
+    "maxSize": "Max size: 64 MB (PDF), 32 MB (Office/CSV), 20 MB (images) — large files upload directly to storage",
     "fileName": "File name",
     "fileType": "Type",
     "fileSize": "Size",
@@ -324,7 +324,7 @@
     "aiUnconfigured": "AI service not configured.",
     "aiUnavailable": "AI service temporarily unavailable.",
     "fileTooLarge": "File too large. Maximum size: {limit}",
-    "invalidFileType": "Invalid file type. Supported: PDF, XLSX, CSV",
+    "invalidFileType": "Invalid file type. Supported: PDF, Word, Excel, CSV, OpenDocument, scans",
     "extractionFailed": "Extraction failed. Please try again.",
     "publishBlocked": "Cannot publish: {reasons}",
     "inviteInvalid": "Invalid or expired invite code.",
@@ -390,7 +390,7 @@
       "steps": {
         "upload": {
           "title": "Upload evidence",
-          "text": "BOMs, declarations, certificates — PDF, XLSX, CSV. Extraction cites the exact page or cell."
+          "text": "BOMs, declarations, certificates — PDF, Word, Excel, CSV, OpenDocument, scans. Extraction cites the exact page or cell."
         },
         "review": {
           "title": "Review values",
@@ -409,6 +409,8 @@
       "loadFailed": "Load failed",
       "actionFailed": "Action failed",
       "networkError": "Network error: {message}",
+      "uploadFailed": "Upload failed: {message}",
+      "uploadFailedFallback": "Upload failed",
       "networkErrorUpload": "Network error during upload",
       "uploadsFailed": "{fail} upload(s) failed; {ok} stored.",
       "uploadsOk": "{ok} document(s) stored — extraction running; this page refreshes itself.",
@@ -429,7 +431,7 @@
       "acceptAll": "Accept all {count} {count, plural, one {proposal} other {proposals}}",
       "newEvidence": "new evidence to review",
       "usuallyProvenBy": "Usually proven by: {proof}",
-      "gapMissing": "No document covers this yet — ask the supplier directly, no navigation needed.",
+      "gapMissing": "No document covers this yet — request it from the supplier or enter the value yourself.",
       "gapConflict": "Sources disagree — ask the supplier for the authoritative value.",
       "supplierNamePlaceholder": "Supplier name, e.g. Gommus…",
       "addSupplier": "Add supplier",
@@ -455,7 +457,10 @@
       "correctedMsg": "Corrected “{label}”.",
       "typeCorrected": "Type the corrected value first.",
       "sourceDocs": "Source documents",
-      "sourceDocsHint": "Every labeled value transcribed from each document — full extraction, separate from the passport fields above.",
+      "sourceDocsHint": "Passport values mapped from each document. Where a full transcription is available, expand to see every labeled value.",
+      "pages": "{count} pages",
+      "scanned": "scan",
+      "typeUnknown": "document",
       "passportValues": "{count} passport value(s)",
       "allExtracted": "— All extracted values",
       "actionsRequired": "Actions required",
@@ -481,7 +486,29 @@
         "done": "done",
         "failed": "failed"
       },
-      "backToProducts": "Back to dossiers"
+      "backToProducts": "Back to dossiers",
+      "missingBannerTitle": "{count} required fields still need a value",
+      "missingBannerBody": "These fields block publishing. Request them from the supplier, or enter the value yourself below.",
+      "missingBannerHint": "Manual values are accepted immediately and appear on the passport as verified.",
+      "orEnterManually": "Or enter the value yourself",
+      "manualPlaceholder": "Value",
+      "saveValue": "Save value",
+      "saving": "Saving…",
+      "manualSavedMsg": "Saved “{label}”.",
+      "manualValueFirst": "Enter a value first.",
+      "manualEntry": "Manual entry",
+      "publishBlockedCount": "Publish blocked · {count} missing",
+      "passportOnly": "— Passport fields only",
+      "retryExtraction": "Retry extraction",
+      "retrying": "Retrying…",
+      "retryQueued": "Extraction re-queued.",
+      "extractionFailed": "Extraction failed.",
+      "extractionRunning": "Extraction is running — this page refreshes automatically.",
+      "identityReviewHint": "Review product name and SKU proposals individually — a supplier name can appear as the product name.",
+      "editVerified": "Edit verified value",
+      "replacementPlaceholder": "New value",
+      "replacedMsg": "Replaced “{label}”.",
+      "cancel": "Cancel"
     },
     "states": {
       "verified": "Verified",
@@ -529,8 +556,8 @@
     "upload": {
       "extracting": "Extracting evidence…",
       "drop": "Drop source documents, or click to browse",
-      "hint": "BOM · supplier declaration · certificate — PDF, XLSX, CSV · multi-select",
-      "rejected": "{names} not accepted — PDF, XLSX or CSV only."
+      "hint": "PDF · Word · Excel · CSV · OpenDocument · PowerPoint · email · text · image · multi-select",
+      "rejected": "{names} not accepted — check the supported formats below."
     },
     "docItems": {
       "loadFailed": "Load failed",
@@ -619,6 +646,7 @@
         "noDocs": "No documents loaded yet. The information exists across BOMs, declarations, certificates — load them here.",
         "docsLoaded": "{count, plural, one {# document loaded} other {# documents loaded}}. Every quotation later links back to its source.",
         "storedNotice": "{count} document(s) stored — structuring runs in the background; values appear below as they land.",
+        "tooLarge": "This file exceeds the upload limit. Large files use direct-to-storage upload; if that is unavailable, compress or split the file.",
         "linkFailed": "Link failed",
         "addFailed": "Add failed",
         "actionFailed": "Action failed",

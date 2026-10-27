@@ -4,7 +4,9 @@ import { useTranslations } from "next-intl";
 import { FileUp, Loader2 } from "lucide-react";
 import { clsx } from "clsx";
 
-const ACCEPT = ".pdf,.xlsx,.csv";
+const ACCEPT =
+  ".pdf,.docx,.doc,.xlsx,.xlsm,.xls,.csv,.tsv,.ods,.odt,.pptx,.odp,.eml,.txt,.md,.markdown,.log,.rtf,.html,.htm,.xml,.json,.png,.jpg,.jpeg,.webp,.gif,.tif,.tiff,.bmp";
+const SUPPORTED = /\.(pdf|docx|doc|xlsx|xlsm|xls|csv|tsv|ods|odt|pptx|odp|eml|txt|md|markdown|log|rtf|html?|xml|json|png|jpe?g|webp|gif|tiff?|bmp)$/i;
 
 /** Ledger-styled dropzone. Multi-file; rejects unknown types client-side before upload. */
 export function UploadDropzone({ onFiles, busy }: { onFiles: (fs: File[]) => void; busy: boolean }) {
@@ -15,8 +17,8 @@ export function UploadDropzone({ onFiles, busy }: { onFiles: (fs: File[]) => voi
   function take(list: FileList | File[] | undefined) {
     const files = Array.from(list ?? []);
     if (files.length === 0) return;
-    const bad = files.filter((f) => !/\.(pdf|xlsx|csv)$/i.test(f.name));
-    const good = files.filter((f) => /\.(pdf|xlsx|csv)$/i.test(f.name));
+    const bad = files.filter((f) => !SUPPORTED.test(f.name));
+    const good = files.filter((f) => SUPPORTED.test(f.name));
     setRejected(bad.length > 0 ? t("rejected", { names: bad.map((f) => `"${f.name}"`).join(", ") }) : "");
     if (good.length > 0) onFiles(good);
   }

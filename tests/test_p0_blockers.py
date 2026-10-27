@@ -68,7 +68,7 @@ def test_audit_uses_json_dumps():
 
 
 def test_upload_size_limit_present():
-    assert "25" in PRODUCTS_SRC, "products.py missing 25MB size guard"
+    assert "100" in PRODUCTS_SRC, "products.py missing absolute size guard"
     assert "413" in PRODUCTS_SRC, "products.py missing 413 status for oversized upload"
 
 

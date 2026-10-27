@@ -7,7 +7,7 @@
   (e.g. "Sheet 1 / F8") taken from openpyxl, never inferred by the model.
   Cell values are flattened into a structured table; Claude only maps that
   table onto field_definitions.
-- CSV: same path as XLSX via pandas (flat rows, "Row N" locations).
+- CSV: streamed with the stdlib csv reader (flat rows, "Row N" locations).
 - Unknown types never reach here: the upload endpoint rejects them (415).
 
 Every inserted row uses status='proposed', extracted_by='ai_system'.
@@ -23,7 +23,6 @@ import json
 import re
 from datetime import date, datetime, time
 
-import pandas as pd
 from anthropic import (
     APIConnectionError,
     APIStatusError,
@@ -106,11 +105,12 @@ def validate_item_locations(items: list[dict], ext: str, table: list[dict] | Non
     Never raises; unknown ext keeps locations untouched.
     """
     out: list[dict] = []
-    valid = table_locations(table) if ext in (".xlsx", ".csv") else set()
+    table_exts = {".xlsx", ".xlsm", ".xls", ".csv", ".tsv", ".ods"}
+    valid = table_locations(table) if ext in table_exts else set()
     for it in items:
         it = dict(it)
         loc = it.get("location")
-        if ext in (".xlsx", ".csv"):
+        if ext in table_exts:
             it["location"] = coerce_table_location(loc, valid)
         elif ext == ".pdf":
             it["location"] = coerce_pdf_location(loc)
@@ -170,36 +170,52 @@ def decode_csv_text(csv_bytes: bytes) -> str:
 
 
 def csv_to_table(csv_bytes: bytes, max_rows: int = TABLE_MAX_ROWS) -> TruncatedList:
+    """Stream CSV rows into the same [{sheet, cell, value}] shape as XLSX.
+
+    Streaming matters: a 30 MB / 3.6M-cell export used to be materialised as a
+    pandas DataFrame (~500 MB RAM per job). The csv reader keeps only the
+    decoded text plus the capped cell list.
+    """
     text = decode_csv_text(csv_bytes)
-    delimiter = None
+    delimiter = ","
     try:
         # Italian/European exports commonly use ';'. A comma-only parser turns
         # the whole row into a single column and loses every field.
         delimiter = csv.Sniffer().sniff(text[:8192], delimiters=",;\t|").delimiter
     except csv.Error:
-        delimiter = None
+        pass
+    reader = csv.reader(io.StringIO(text), delimiter=delimiter)
     try:
-        if delimiter:
-            df = pd.read_csv(
-                io.StringIO(text),
-                dtype=str,
-                keep_default_na=False,
-                sep=delimiter,
-                engine="python",
-            )
-        else:
-            df = pd.read_csv(io.StringIO(text), dtype=str, keep_default_na=False)
-    except pd.errors.EmptyDataError as exc:
+        header = next(reader)
+    except StopIteration as exc:
         raise ValueError("csv contains no table data") from exc
+    except csv.Error as exc:
+        raise ValueError("csv contains no table data") from exc
+
+    headers: list[str] = []
+    seen: dict[str, int] = {}
+    for idx, name in enumerate(header):
+        name = name.strip() if name and name.strip() else f"Unnamed: {idx}"
+        if name in seen:
+            seen[name] += 1
+            name = f"{name}.{seen[name]}"
+        else:
+            seen[name] = 0
+        headers.append(name)
+
     rows = TruncatedList()
-    for i, record in enumerate(df.to_dict(orient="records"), start=2):  # row 1 = header
-        for col, val in record.items():
-            if val is None or (isinstance(val, str) and not val.strip()):
-                continue
-            if len(rows) >= max_rows:
-                rows.truncated = True
-                return rows
-            rows.append({"sheet": "CSV", "cell": f"Row {i} / {col}", "value": str(val)})
+    try:
+        for i, record in enumerate(reader, start=2):  # row 1 = header
+            for col_idx, value in enumerate(record):
+                if value is None or not value.strip():
+                    continue
+                if len(rows) >= max_rows:
+                    rows.truncated = True
+                    return rows
+                col = headers[col_idx] if col_idx < len(headers) else f"Column {col_idx + 1}"
+                rows.append({"sheet": "CSV", "cell": f"Row {i} / {col}", "value": value})
+    except csv.Error as exc:
+        raise ValueError(f"csv could not be parsed: {exc}") from exc
     return rows
 
 
@@ -306,9 +322,6 @@ async def _claude_json_messages(messages: list[dict]) -> list[dict]:
         client,
         model=settings.anthropic_model,
         max_tokens=2000,
-        # Deterministic transcription: extracting the same document twice must
-        # produce the same proposals, not a temperature-random variation.
-        temperature=0,
         system=SYSTEM_PROMPT,
         messages=messages,
     )
@@ -394,7 +407,6 @@ async def extract_parties_pdf(pdf_bytes: bytes) -> list[dict]:
             client,
             model=settings.anthropic_model,
             max_tokens=400,
-            temperature=0,
             system=PARTIES_SYSTEM,
             messages=[{
                 "role": "user",

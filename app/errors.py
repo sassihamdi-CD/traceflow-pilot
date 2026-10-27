@@ -164,26 +164,64 @@ def file_too_large(limit_mb: int) -> HTTPException:
 
 def unsupported_type(filename: str) -> HTTPException:
     return err(415, "unsupported_type",
-               f"We cannot read “{filename}” — only PDF, Excel (.xlsx) and CSV files are accepted.",
-               "Convert the document to PDF, XLSX or CSV and upload again.")
+               f"We cannot read “{filename}”. Supported formats: PDF, Word, Excel, CSV, OpenDocument, PowerPoint, email, text and images.",
+               "Upload PDF, Word (.docx), Excel (.xlsx/.xls), CSV, OpenDocument, "
+               "PowerPoint, email (.eml), text, or an image. Legacy .doc files "
+               "must be re-saved as .docx or PDF.")
 
 
 def file_content_problem(kind: str) -> HTTPException:
     explanations = {
         "not_a_pdf": ("It is named .pdf but is not a real PDF file.",
                       "Re-export the document as PDF and upload again."),
-        "not_a_workbook": ("It is named .xlsx but is not a readable Excel workbook.",
-                           "Re-save it from Excel (or LibreOffice) as .xlsx and upload again."),
+        "not_an_image": ("It is named as an image but the bytes are not a supported image.",
+                         "Re-save it as PNG or JPG and upload again."),
+        "not_a_workbook": ("It is named as a spreadsheet but is not a readable workbook.",
+                           "Re-save it from Excel (or LibreOffice) as .xlsx or CSV and upload again."),
+        "not_a_docx": ("It is named as a Word document but is not a readable .docx file.",
+                       "Open it in Word/LibreOffice and save as .docx or PDF, then upload again."),
+        "not_a_pptx": ("It is named as a presentation but is not a readable .pptx file.",
+                       "Re-save it as .pptx or PDF and upload again."),
+        "not_an_opendocument": ("It is named as an OpenDocument file but is not a valid one.",
+                                "Re-save it as .docx/.xlsx/.pdf and upload again."),
+        "not_rtf": ("It is named .rtf but is not a real RTF file.",
+                    "Re-save it as .txt, .docx or PDF and upload again."),
+        "not_an_email": ("It is named .eml but is not a readable email.",
+                         "Save the email as .eml again, or paste its text."),
+        "text_unreadable": ("It is named as text but cannot be decoded.",
+                            "Re-save it with UTF-8 encoding and upload again."),
+        "corrupt_container": ("The file is named as an Office/OpenDocument file but its container is corrupt.",
+                              "Re-save it from the original application and upload again."),
+        "legacy_doc": ("Legacy Word (.doc) files cannot be read directly.",
+                       "Open it in Word/LibreOffice and save as .docx or PDF, then upload again."),
         "csv_binary": ("It is named .csv but looks like a binary file, not text.",
                        "Export the sheet as CSV (comma-separated text) and upload again."),
         "csv_unreadable": ("It is named .csv but cannot be read as text.",
                            "Re-export it as CSV with UTF-8 encoding and upload again."),
         "csv_no_table": ("It is named .csv but contains no table data.",
                          "Check the file has a header row plus data rows, then upload again."),
+        "zip_bomb": ("The Office/OpenDocument file expands to an unsafe size.",
+                     "Re-save it from the original application and upload again."),
+        "zip_too_large": ("The Office/OpenDocument file expands to an unsafe size.",
+                          "Re-save it from the original application and upload again."),
+        "zip_too_many_files": ("The Office/OpenDocument file contains too many internal files.",
+                               "Re-save it from the original application and upload again."),
     }
     message, hint = explanations.get(kind, ("The file content does not match its type.",
                                             "Re-export the document in the stated format and upload again."))
     return err(415, kind, f"We cannot read this file. {message}", hint)
+
+
+def upload_incomplete() -> HTTPException:
+    return err(409, "upload_incomplete",
+               "That file did not finish uploading.",
+               "Wait for the upload to finish, then try again. Nothing was saved.")
+
+
+def presign_unavailable() -> HTTPException:
+    return err(409, "presign_unavailable",
+               "Direct large-file upload is not configured on this server.",
+               "The app will fall back to the standard upload path.")
 
 
 def storage_unavailable() -> HTTPException:
