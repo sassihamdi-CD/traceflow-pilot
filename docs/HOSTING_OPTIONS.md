@@ -5,9 +5,10 @@ Status: recommendation only; nothing has been deployed by this change.
 ## Short version
 
 **Keep the Next.js web app on Vercel. Run the extraction worker on a
-long-lived container host (Railway or Fly.io), connected to Supabase and R2.
-Move the FastAPI app there too if Ask or uploads start hitting Vercel's
-request/function limits; otherwise it can stay on Vercel during the pilot.**
+long-lived container host (Railway, Fly.io, or DigitalOcean), connected to
+Supabase and R2. Move the FastAPI app there too if Ask or uploads start hitting
+Vercel's request/function limits; otherwise it can stay on Vercel during the
+pilot.**
 
 The serverless `POST /api/worker/tick` is a stopgap. It processes one light job
 per minute, cannot do full PDF transcription, and adds a pg_cron/pg_net
@@ -20,9 +21,27 @@ dependency. It should not be the manufacturer-scale path.
 | Current: all Vercel + pg_cron tick | Vercel | Vercel | serverless tick | OK for demo; not for full ingestion |
 | **Web Vercel + worker Railway/Fly** | Vercel | Vercel | container | **Recommended next step** |
 | API + worker on Railway/Fly | Vercel | container | container | Best once Ask/large endpoints exceed Vercel limits |
+| DigitalOcean App Platform | Vercel | App Platform | App Platform worker | Managed containers, one bill; always-on worker needs a paid instance |
+| DigitalOcean Droplet + Docker Compose | Vercel | Droplet | Droplet | Cheapest predictable cost; you own OS, TLS, and updates |
 | Render free web/worker | Vercel | Render | Render | Free worker spins down; use paid |
 | AWS ECS/Fargate | Vercel/CloudFront | ECS | ECS | Works, but more setup than this pilot needs |
 | Cloudflare Workers/Containers | CF | CF | CF | Python parsing stack (pypdf/openpyxl/docx) is a poor fit |
+
+## Decision for the founder
+
+All three container hosts run the same `Dockerfile` and the same
+`python scripts/worker.py --concurrency 4` command, so switching later is low
+cost. Pick on budget and operations comfort:
+
+- **Least work, managed**: Railway or Fly.io. Push the repo, set env vars, done.
+- **One provider and one bill**: DigitalOcean App Platform. Add the worker as a
+  "Worker" component from the same repo; it does not need a public port.
+- **Lowest fixed cost, full control**: DigitalOcean Droplet ($6-12/mo) running
+  the existing `docker compose` with the `web` service disabled (web stays on
+  Vercel). Expect to handle OS patching, the firewall, and TLS yourself.
+
+In every case the database stays on Supabase and files stay on R2; nothing on
+the host is stateful except logs.
 
 ## Why not Vercel for the worker
 
@@ -39,9 +58,11 @@ dependency. It should not be the manufacturer-scale path.
 ## Recommended topology
 
 - **Vercel**: web (`traceflow.mindscript.tech`), SSR, auth callbacks.
-- **Railway or Fly.io**: one worker service built from the repo `Dockerfile`,
-  command `python scripts/worker.py --concurrency 4`. Start with 1 vCPU / 1 GB.
-  Add a second instance or raise to 2 GB if more than ~4 large jobs run at once.
+- **Railway, Fly.io, or DigitalOcean**: one worker service built from the repo
+  `Dockerfile`, command `python scripts/worker.py --concurrency 4`. Start with
+  1 vCPU / 1 GB. Add a second instance or raise to 2 GB if more than ~4 large
+  jobs run at once. On DigitalOcean App Platform create a **Worker** component
+  (no HTTP port); on a Droplet run the same command under `docker compose`.
 - **Supabase Postgres**: use the transaction pooler (`:6543`) with
   `prepare_threshold=None`. API pool: 2 on serverless, 10-20 on a long-lived
   host (`DB_POOL_MAX_SIZE`). Worker concurrency 4 + 4 heartbeat connections is
@@ -70,8 +91,10 @@ dependency. It should not be the manufacturer-scale path.
 
 ## Cost / operations notes
 
-- One small Railway/Fly worker is typically a few dollars a month and removes
-  the pg_cron + serverless timeout class of failures.
+- One small Railway/Fly worker is typically a few dollars a month; a
+  DigitalOcean Droplet is $6-12/mo flat; App Platform worker instances start
+  around $5-12/mo. Any of them removes the pg_cron + serverless timeout class
+  of failures.
 - Keep one worker replica until duplicate-job behavior is observed in
   production. `FOR UPDATE SKIP LOCKED` prevents double-claiming; the heartbeat
   prevents stale requeues, but two replicas double the DB connection budget.

@@ -280,10 +280,11 @@ Tests: `.venv/bin/python -m pytest -q` = **140 passed, 2 skipped**;
 standard one-worker compose stack was restored.
 
 Hosting decision (details in `docs/HOSTING_OPTIONS.md`): keep web on Vercel;
-run the full worker on Railway or Fly.io with Supabase + R2, and move the
-FastAPI app there too if Ask/upload endpoints hit Vercel limits. Disable the
-pg_cron tick once the real worker is live — the light tick can mark a PDF done
-before full transcription. Apply migration 020 and set R2 CORS first.
+run the full worker on Railway, Fly.io, or DigitalOcean (App Platform worker or
+a Docker Compose Droplet) with Supabase + R2, and move the FastAPI app there too
+if Ask/upload endpoints hit Vercel limits. Disable the pg_cron tick once the
+real worker is live — the light tick can mark a PDF done before full
+transcription. Apply migration 020 and set R2 CORS first.
 
 Stress details, caveats and production prerequisites: `docs/STRESS_TESTING.md`.
 
